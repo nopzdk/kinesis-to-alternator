@@ -1,21 +1,27 @@
 import boto3
+from dotenv import load_dotenv
+import os
 import multiprocessing
 from datetime import datetime
 import json
 from boto3.dynamodb.types import TypeDeserializer
 
+load_dotenv()
 
-KINESIS_STREAM = 'test'
-START_TIME = datetime(2025, 9, 10, 13, 30, 0)
-SCYLLA_URL = 'http://node-0.aws-us-east-1.165a4a243f0c0b41fd2f.clusters.scylla.cloud:8000'
-DST_TABLE = 'partner_user_id_mappings_small'
-REGION = 'us-east-1'
+kinesis_stream = os.getenv('KINESIS_STREAM')
+scylla_url = os.getenv('SCYLLA_URL')
+dst_table = os.getenv('DST_TABLE')
+region = os.getenv('REGION')
+
+start_time_str = (os.getenv('START_TIME'))
+time_parts = [int(part) for part in start_time_str.split(',')]
+start_time = datetime(*time_parts)
 
 
 def process_and_insert(items, table_name):
     records = [items]
     deserializer = TypeDeserializer()
-    dynamodb = boto3.resource('dynamodb', endpoint_url=SCYLLA_URL, region_name=REGION)
+    dynamodb = boto3.resource('dynamodb', endpoint_url=scylla_url, region_name=region)
     table = dynamodb.Table(table_name)
     with table.batch_writer() as batch:
         for record in records:
@@ -49,10 +55,10 @@ def decode_and_transform(record):
 
 def process_shard(shard_id, at_timestamp):
     count = 0
-    kinesis = boto3.client('kinesis',region_name=REGION)
+    kinesis = boto3.client('kinesis', region_name=region)
     # Get an iterator for this shard starting at AT_TIMESTAMP
     iterator = kinesis.get_shard_iterator(
-        StreamName=KINESIS_STREAM,
+        StreamName=kinesis_stream,
         ShardId=shard_id,
         ShardIteratorType='AT_TIMESTAMP',
         Timestamp=at_timestamp
@@ -63,7 +69,7 @@ def process_shard(shard_id, at_timestamp):
             # process each record
             #print('r type',type(r))
             #print(r)
-            process_and_insert(r,DST_TABLE)
+            process_and_insert(r, dst_table)
             count += 1
             #print(count)
             if count % 3 == 0:
@@ -74,11 +80,11 @@ def process_shard(shard_id, at_timestamp):
 
 if __name__ == "__main__":
     print('Starting streaming')
-    client = boto3.client('kinesis',region_name=REGION)
-    shards = client.describe_stream(StreamName=KINESIS_STREAM)['StreamDescription']['Shards']
+    client = boto3.client('kinesis', region_name=region)
+    shards = client.describe_stream(StreamName=kinesis_stream)['StreamDescription']['Shards']
     processes = []
     for shard in shards:
-        p = multiprocessing.Process(target=process_shard, args=(shard['ShardId'], START_TIME))
+        p = multiprocessing.Process(target=process_shard, args=(shard['ShardId'], start_time))
         p.start()
         processes.append(p)
         print('started shard:', shard['ShardId'])
