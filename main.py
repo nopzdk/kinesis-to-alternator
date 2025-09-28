@@ -23,7 +23,7 @@ s3_export_arn = get_env_var('S3_EXPORT_ARN')
 s3_bucket = get_env_var('S3_BUCKET')
 s3_manifest_key = get_env_var('S3_MANIFEST_KEY')
 alternator_ips = get_env_var('ALTERNATOR_IPS').split(',')
-alternator_use_ssl = get_env_var('ALTERNATOR_USE_SSL')
+alternator_use_ssl = os.getenv('ALTERNATOR_USE_SSL', False).lower() in ('true', '1', 't')
 if alternator_use_ssl:
     alternator_port = 8043
     url_prefix = 'https://'
@@ -65,10 +65,17 @@ def process_shard(shard_id, at_timestamp, fetch_size, put_size):
     pkeys = [k['AttributeName'] for k in key_schema]
     while iterator:
         records = kinesis.get_records(ShardIterator=iterator, Limit=fetch_size)
+        if 'Records' in records and len(records['Records']) > 0 and records['Records'][0]:
+            record_count = len(records['Records'][0])
+            timestamp = records['Records'][0]['ApproximateArrivalTimestamp']
+        else:
+            record_count = 0
+            timestamp = '-'
+
         print(shard_id,
-              'batch size: ', len(records['Records'][0]),
-              'MillisBehind: ', records['MillisBehindLatest'],
-              'ApproximateArrivalTimestamp', records['Records'][0]['ApproximateArrivalTimestamp'])
+              'batch size:', record_count,
+              'MillisBehind:', records['MillisBehindLatest'],
+              'ApproximateArrivalTimestamp', timestamp)
         records_lists = chunk_list(records['Records'], put_size)
         for record_list in records_lists:
             with table.batch_writer(overwrite_by_pkeys=pkeys) as batch:
@@ -99,6 +106,7 @@ def get_timestamp_from_manifest(bucket,manifestkey):
 
 if __name__ == "__main__":
     print(f'Starting streaming {datetime.now()}')
+    print(f'Connecting to Stream: {kinesis_stream}')
     client = boto3.client('kinesis', region_name=kinesis_region)
     shards = client.describe_stream(StreamName=kinesis_stream)['StreamDescription']['Shards']
     processes = []
